@@ -185,6 +185,34 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         return np.hstack(features)
 
 
+class AdaptiveSelectKBest(BaseEstimator, TransformerMixin):
+    """
+    SelectKBest (f_classif) that never asks for more features than are available.
+
+    Plain SelectKBest raises when k exceeds the number of columns, which would make a
+    pipeline fail on narrow datasets (for example when feature engineering is disabled).
+
+    Parameters:
+        k (int): Requested number of features
+        score_func (callable): Scoring function used to rank the features
+    """
+
+    def __init__(self, k: int = 20, score_func=f_classif):
+        self.k = k
+        self.score_func = score_func
+
+    def fit(self, X, y=None):
+        """Fit SelectKBest with k capped at the number of input features."""
+        # k may arrive as a float (e.g. read back from a DataFrame row), SelectKBest needs an int
+        k = min(int(self.k), X.shape[1])
+        self.selector_ = SelectKBest(score_func=self.score_func, k=k).fit(X, y)
+        return self
+
+    def transform(self, X):
+        """Keep only the selected features."""
+        return self.selector_.transform(X)
+
+
 class PreprocessingPipeline:
     """
     Integrated preprocessing pipeline combining multiple preprocessing steps
@@ -228,25 +256,43 @@ class PreprocessingPipeline:
             Pipeline: Configured sklearn pipeline
         """
         steps = []
-        
+
         # Step 1: Imputation
-        pass
-        
-        # Step 2: Outlier handling
-        pass
-        
+        if imputer_strategy == 'knn':
+            imputer = KNNImputer(n_neighbors=5)
+        elif imputer_strategy in ('mean', 'median', 'most_frequent'):
+            imputer = SimpleImputer(strategy=imputer_strategy)
+        else:
+            raise ValueError(f"Unknown imputer strategy '{imputer_strategy}'. "
+                             "Use 'mean', 'median', 'most_frequent' or 'knn'.")
+        steps.append(('imputer', imputer))
+
+        # Step 2: Outlier handling (pass outlier_method=None to skip)
+        if outlier_method is not None:
+            if outlier_method not in ('iqr', 'zscore'):
+                raise ValueError(f"Unknown outlier method '{outlier_method}'. Use 'iqr' or 'zscore'.")
+            threshold = 1.5 if outlier_method == 'iqr' else 3.0
+            steps.append(('outlier_handler',
+                          OutlierHandler(method=outlier_method, strategy='cap', threshold=threshold)))
+
         # Step 3: Feature engineering
-        pass
-        
+        if feature_engineering:
+            steps.append(('feature_engineer',
+                          FeatureEngineer(interactions=True, polynomials=False, transformations=True)))
+
         # Step 4: Scaling
-        pass
-        
+        scalers = {'standard': StandardScaler, 'robust': RobustScaler, 'minmax': MinMaxScaler}
+        if scaler_type not in scalers:
+            raise ValueError(f"Unknown scaler type '{scaler_type}'. Use one of {list(scalers)}.")
+        steps.append(('scaler', scalers[scaler_type]()))
+
         # Step 5: Feature selection
-        pass
-        
+        if feature_selection:
+            steps.append(('feature_selector', AdaptiveSelectKBest(k=n_features)))
+
         # Step 6: Classifier
-        pass
-        
+        steps.append(('classifier', LogisticRegression(max_iter=1000, random_state=self.random_state)))
+
         self.pipeline = Pipeline(steps)
         return self.pipeline
     
@@ -580,11 +626,14 @@ class PreprocessingPipeline:
         """
         fig, ax = plt.subplots(figsize=figsize)
         
-        bp = ax.boxplot([cv_scores], labels=['CV Scores'], patch_artist=True,
+        bp = ax.boxplot([cv_scores], patch_artist=True,
                        boxprops=dict(facecolor='lightblue'),
                        medianprops=dict(color='red', linewidth=2),
                        widths=0.5)
         
+        ax.set_xticks([1])
+        ax.set_xticklabels(['CV Scores'])
+
         # Add individual points
         ax.scatter([1] * len(cv_scores), cv_scores, color='darkblue', 
                   alpha=0.5, s=50, zorder=3)

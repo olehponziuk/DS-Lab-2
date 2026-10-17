@@ -63,6 +63,34 @@ class ScalingAnalyzer:
         self.scaled_datasets = {}
         self.scalers = {}
         
+    def _feature_columns(self) -> List[str]:
+        """Numeric columns that get scaled (the target column is never scaled)."""
+        numeric = self.data.select_dtypes(include=[np.number]).columns
+        return [col for col in numeric if col != self.target_col]
+
+    def _apply_scaler(self, name: str, scaler) -> pd.DataFrame:
+        """
+        Fit `scaler` on the feature columns, store the scaled copy and the fitted scaler.
+
+        Parameters:
+            name (str): Key under which the result is stored in scaled_datasets / scalers
+            scaler: Unfitted sklearn transformer
+
+        Returns:
+            pd.DataFrame: Copy of the data with scaled feature columns and untouched target
+        """
+        scaled = self.data.copy()
+        feature_cols = self._feature_columns()
+
+        if feature_cols:
+            scaled[feature_cols] = scaler.fit_transform(self.data[feature_cols])
+            self.scalers[name] = scaler
+        else:
+            print(f"No numeric feature columns to scale with '{name}'; data returned unchanged")
+
+        self.scaled_datasets[name] = scaled
+        return scaled
+
     def apply_minmax_scaling(self, feature_range: Tuple[float, float] = (0, 1)) -> pd.DataFrame:
         """
         Apply Min-Max scaling to rescale features to a fixed range.
@@ -73,7 +101,7 @@ class ScalingAnalyzer:
         Returns:
             pd.DataFrame: DataFrame with features scaled to specified range.
         """
-        pass
+        return self._apply_scaler('minmax', MinMaxScaler(feature_range=feature_range))
     
     def apply_standard_scaling(self) -> pd.DataFrame:
         """
@@ -82,7 +110,7 @@ class ScalingAnalyzer:
         Returns:
             pd.DataFrame: DataFrame with standardized features.
         """
-        pass
+        return self._apply_scaler('standard', StandardScaler())
     
     def apply_robust_scaling(self) -> pd.DataFrame:
         """
@@ -91,7 +119,7 @@ class ScalingAnalyzer:
         Returns:
             pd.DataFrame: DataFrame with robust scaled features.
         """
-        pass
+        return self._apply_scaler('robust', RobustScaler())
     
     def apply_maxabs_scaling(self) -> pd.DataFrame:
         """
@@ -100,7 +128,7 @@ class ScalingAnalyzer:
         Returns:
             pd.DataFrame: DataFrame with maxabs scaled features.
         """
-        pass
+        return self._apply_scaler('maxabs', MaxAbsScaler())
     
     def apply_power_transform(self, method: str = 'yeo-johnson') -> pd.DataFrame:
         """
@@ -112,7 +140,7 @@ class ScalingAnalyzer:
         Returns:
             pd.DataFrame: DataFrame with power transformed and standardized features.
         """
-        pass
+        return self._apply_scaler('power', PowerTransformer(method=method, standardize=True))
     
     def get_scaling_summary(self) -> pd.DataFrame:
         """
@@ -121,7 +149,17 @@ class ScalingAnalyzer:
         Returns:
             DataFrame with statistics for each scaling method
         """
-        pass
+        feature_cols = self._feature_columns()
+        if not feature_cols:
+            return pd.DataFrame()
+
+        statistics = ['mean', 'std', 'min', 'max']
+        frames = {'original': self.original_data[feature_cols].describe().loc[statistics].T}
+        for name, scaled_df in self.scaled_datasets.items():
+            frames[name] = scaled_df[feature_cols].describe().loc[statistics].T
+
+        # Columns become a MultiIndex: (method, statistic); rows are the features
+        return pd.concat(frames, axis=1)
     
     def evaluate_model_performance(self, model_type: str = 'linear_regression',
                                    dataset_name: str = 'original') -> Dict[str, float]:
@@ -135,7 +173,37 @@ class ScalingAnalyzer:
         Returns:
             Dict[str, float]: Dictionary containing cv_score and cv_std.
         """
-        pass
+        if self.target_col is None:
+            raise ValueError("A target column is required to evaluate models")
+
+        if dataset_name == 'original':
+            dataset = self.original_data
+        elif dataset_name in self.scaled_datasets:
+            dataset = self.scaled_datasets[dataset_name]
+        else:
+            available = ['original'] + list(self.scaled_datasets)
+            raise ValueError(f"Dataset '{dataset_name}' not found. Available datasets: {available}")
+
+        models = {
+            'linear_regression': (LinearRegression(), 'r2'),
+            'knn': (KNeighborsClassifier(n_neighbors=5), 'accuracy'),
+            'svm': (SVC(kernel='rbf', random_state=42), 'accuracy'),
+            'neural_network': (MLPClassifier(hidden_layer_sizes=(32,), max_iter=500, random_state=42), 'accuracy'),
+        }
+        if model_type not in models:
+            raise ValueError(f"Unknown model type '{model_type}'. Choose from: {list(models)}")
+        model, metric = models[model_type]
+
+        feature_cols = self._feature_columns()
+        data = dataset[feature_cols + [self.target_col]].dropna()
+
+        scores = cross_val_score(model, data[feature_cols], data[self.target_col], cv=5, scoring=metric)
+
+        return {
+            'cv_score': float(scores.mean()),
+            'cv_std': float(scores.std()),
+            'metric': metric,
+        }
     
     def compare_model_performance(self, model_types: List[str] = None) -> pd.DataFrame:
         """
@@ -255,7 +323,10 @@ class ScalingAnalyzer:
                 data_to_plot.append(scaled_df[feature].dropna())
                 labels.append(method_name.upper())
             
-            bp = ax.boxplot(data_to_plot, labels=labels, patch_artist=True)
+            # `labels=` was removed in matplotlib 3.11 (renamed tick_labels), so set ticks manually
+            bp = ax.boxplot(data_to_plot, patch_artist=True)
+            ax.set_xticks(range(1, len(labels) + 1))
+            ax.set_xticklabels(labels)
             
             # Color the boxes
             colors = ['skyblue'] + ['lightcoral'] * len(self.scaled_datasets)

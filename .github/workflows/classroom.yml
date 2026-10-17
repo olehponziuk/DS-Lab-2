@@ -34,53 +34,45 @@ jobs:
         run: |
           python -m venv venv
 
-      - name: Activate venv and install dependencies
+      - name: Install dependencies
         run: |
-          source venv/bin/activate
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          ./venv/bin/python -m pip install --upgrade pip
+          ./venv/bin/python -m pip install -r requirements.txt
 
       - name: Run Task 1 Tests
         run: |
-          source venv/bin/activate
-          pytest tests/test_task1_data_cleaning.py -v --tb=short
+          ./venv/bin/python -m pytest tests/test_task1_data_cleaning.py -v --tb=short
         continue-on-error: false
 
       - name: Run Task 2 Tests
         run: |
-          source venv/bin/activate
-          pytest tests/test_task2_outlier_detection.py -v --tb=short
+          ./venv/bin/python -m pytest tests/test_task2_outlier_detection.py -v --tb=short
         continue-on-error: false
 
       - name: Run Task 3 Tests
         run: |
-          source venv/bin/activate
-          pytest tests/test_task3_scaling.py -v --tb=short
+          ./venv/bin/python -m pytest tests/test_task3_scaling.py -v --tb=short
         continue-on-error: false
 
       - name: Run Task 4 Tests
         run: |
-          source venv/bin/activate
-          pytest tests/test_task4_feature_engineering.py -v --tb=short
+          ./venv/bin/python -m pytest tests/test_task4_feature_engineering.py -v --tb=short
         continue-on-error: false
 
       - name: Run Task 5 Tests
         run: |
-          source venv/bin/activate
-          pytest tests/test_task5_pipeline.py -v --tb=short
+          ./venv/bin/python -m pytest tests/test_task5_pipeline.py -v --tb=short
         continue-on-error: false
 
       - name: Run Task 6 Tests
         run: |
-          source venv/bin/activate
-          pytest tests/test_task6_case_study.py -v --tb=short
+          ./venv/bin/python -m pytest tests/test_task6_case_study.py -v --tb=short
         continue-on-error: false
 
       - name: Generate Test Report
         if: always()
         run: |
-          source venv/bin/activate
-          pytest tests/ --tb=short --junitxml=test-results.xml
+          ./venv/bin/python -m pytest tests/ --tb=short --junitxml=test-results.xml
 
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
